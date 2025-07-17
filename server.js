@@ -12,8 +12,9 @@ app.use(express.json());
 // Initialize SQLite database
 const db = new sqlite3.Database(':memory:'); // In-memory for simplicity
 
-// Create submissions table
+// Create tables
 db.serialize(() => {
+  // Submissions table
   db.run(`CREATE TABLE submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_name TEXT NOT NULL,
@@ -21,6 +22,34 @@ db.serialize(() => {
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  
+  // Rooms table
+  db.run(`CREATE TABLE rooms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    capacity INTEGER NOT NULL,
+    price REAL NOT NULL,
+    amenities TEXT,
+    status TEXT DEFAULT 'available',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  
+  // Insert sample rooms
+  const sampleRooms = [
+    { number: '101', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'available' },
+    { number: '102', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'occupied' },
+    { number: '201', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'available' },
+    { number: '202', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'maintenance' },
+    { number: '301', type: 'Suite', capacity: 4, price: 5000, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar', 'Balcony']), status: 'available' }
+  ];
+  
+  sampleRooms.forEach(room => {
+    db.run(
+      'INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [room.number, room.type, room.capacity, room.price, room.amenities, room.status]
+    );
+  });
 });
 
 // Routes
@@ -31,7 +60,8 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      submissions: '/api/submissions'
+      submissions: '/api/submissions',
+      rooms: '/api/rooms'
     }
   });
 });
@@ -125,6 +155,149 @@ app.post('/api/submissions', (req, res) => {
       });
     }
   );
+});
+
+// ROOMS API ENDPOINTS
+app.get('/api/rooms', (req, res) => {
+  db.all('SELECT * FROM rooms ORDER BY number ASC', (err, rows) => {
+    if (err) {
+      res.status(500).json({ 
+        success: false,
+        error: err.message 
+      });
+      return;
+    }
+    
+    // Transform database rows to match frontend format
+    const rooms = rows.map(row => ({
+      id: row.id,
+      number: row.number,
+      type: row.type,
+      capacity: row.capacity,
+      price: row.price,
+      amenities: JSON.parse(row.amenities || '[]'),
+      status: row.status,
+      createdAt: row.created_at
+    }));
+    
+    console.log(`🏨 Retrieved ${rooms.length} rooms`);
+    res.json(rooms);
+  });
+});
+
+app.post('/api/rooms', (req, res) => {
+  const { number, type, capacity, price, amenities, status } = req.body;
+  
+  // Validation
+  if (!number || !type || !capacity || !price) {
+    res.status(400).json({ 
+      success: false,
+      error: 'Missing required fields: number, type, capacity, price' 
+    });
+    return;
+  }
+
+  console.log(`🏨 Creating new room: ${number} (${type})`);
+
+  db.run(
+    'INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [number, type, capacity, price, JSON.stringify(amenities || []), status || 'available'],
+    function(err) {
+      if (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ 
+          success: false,
+          error: 'Database error: ' + err.message 
+        });
+        return;
+      }
+      
+      const newRoom = {
+        id: this.lastID,
+        number,
+        type,
+        capacity,
+        price,
+        amenities: amenities || [],
+        status: status || 'available',
+        createdAt: new Date().toISOString()
+      };
+      
+      console.log(`✅ Room created with ID: ${this.lastID}`);
+      res.json({ 
+        success: true,
+        data: newRoom,
+        message: 'Room created successfully' 
+      });
+    }
+  );
+});
+
+app.put('/api/rooms/:id', (req, res) => {
+  const roomId = req.params.id;
+  const { number, type, capacity, price, amenities, status } = req.body;
+  
+  console.log(`🏨 Updating room ID: ${roomId}`);
+
+  db.run(
+    'UPDATE rooms SET number = ?, type = ?, capacity = ?, price = ?, amenities = ?, status = ? WHERE id = ?',
+    [number, type, capacity, price, JSON.stringify(amenities || []), status, roomId],
+    function(err) {
+      if (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ 
+          success: false,
+          error: 'Database error: ' + err.message 
+        });
+        return;
+      }
+      
+      if (this.changes === 0) {
+        res.status(404).json({ 
+          success: false,
+          error: 'Room not found' 
+        });
+        return;
+      }
+      
+      console.log(`✅ Room ${roomId} updated successfully`);
+      res.json({ 
+        success: true,
+        message: 'Room updated successfully' 
+      });
+    }
+  );
+});
+
+app.delete('/api/rooms/:id', (req, res) => {
+  const roomId = req.params.id;
+  
+  console.log(`🏨 Deleting room ID: ${roomId}`);
+
+  db.run('DELETE FROM rooms WHERE id = ?', [roomId], function(err) {
+    if (err) {
+      console.error('Database error:', err);
+      res.status(500).json({ 
+        success: false,
+        error: 'Database error: ' + err.message 
+      });
+      return;
+    }
+    
+    if (this.changes === 0) {
+      res.status(404).json({ 
+        success: false,
+        error: 'Room not found' 
+      });
+      return;
+    }
+    
+    console.log(`✅ Room ${roomId} deleted successfully`);
+    res.json({ 
+      success: true,
+      message: 'Room deleted successfully' 
+    });
+  });
 });
 
 // Error handling middleware
