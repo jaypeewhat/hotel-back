@@ -103,10 +103,20 @@ app.get('/api/submissions', (req, res) => {
 });
 
 app.post('/api/submissions', (req, res) => {
+  console.log('📥 Received POST request to /api/submissions');
+  console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
+  
   const { studentName, workType, content } = req.body;
+  
+  console.log('🔍 Extracted fields:');
+  console.log('   studentName:', studentName);
+  console.log('   workType:', workType);
+  console.log('   content type:', typeof content);
+  console.log('   content length:', content ? content.length : 'undefined');
   
   // Validation
   if (!studentName || !workType || !content) {
+    console.log('❌ Validation failed - missing required fields');
     res.status(400).json({ 
       success: false,
       error: 'Missing required fields: studentName, workType, content' 
@@ -117,6 +127,7 @@ app.post('/api/submissions', (req, res) => {
   // Validate work type
   const validWorkTypes = ['room_request', 'report', 'financial_report'];
   if (!validWorkTypes.includes(workType)) {
+    console.log(`❌ Invalid work type: ${workType}`);
     res.status(400).json({ 
       success: false,
       error: `Invalid work type: ${workType}. Valid types: ${validWorkTypes.join(', ')}` 
@@ -131,7 +142,7 @@ app.post('/api/submissions', (req, res) => {
     [studentName, workType, content],
     function(err) {
       if (err) {
-        console.error('Database error:', err);
+        console.error('❌ Database error:', err);
         res.status(500).json({ 
           success: false,
           error: 'Database error: ' + err.message 
