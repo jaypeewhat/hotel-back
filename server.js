@@ -5,9 +5,9 @@ const sqlite3 = require('sqlite3').verbose();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware with increased limits and specific CORS
+// Middleware with increased limits and permissive CORS for development
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'https://localhost:3000'],
+  origin: true, // Allow all origins for development
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -15,12 +15,12 @@ app.use(cors({
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Initialize SQLite database
-const db = new sqlite3.Database(':memory:');
+// Initialize SQLite database - use file-based database for persistence
+const db = new sqlite3.Database('./hotel_management.db'); // This creates a persistent file
 
-// Create tables
+// Create tables (only if they don't exist)
 db.serialize(() => {
-  db.run(`CREATE TABLE submissions (
+  db.run(`CREATE TABLE IF NOT EXISTS submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_name TEXT NOT NULL,
     work_type TEXT NOT NULL,
@@ -28,7 +28,7 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   
-  db.run(`CREATE TABLE rooms (
+  db.run(`CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     number TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
@@ -39,18 +39,31 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   
-  // Insert sample rooms
-  const sampleRooms = [
-    { number: '101', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'available' },
-    { number: '102', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'occupied' },
-    { number: '201', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'available' },
-    { number: '202', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'maintenance' },
-    { number: '301', type: 'Suite', capacity: 4, price: 5000, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar', 'Balcony']), status: 'available' }
-  ];
-  
-  sampleRooms.forEach(room => {
-    db.run('INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [room.number, room.type, room.capacity, room.price, room.amenities, room.status]);
+  // Insert sample rooms only if rooms table is empty
+  db.get("SELECT COUNT(*) as count FROM rooms", (err, row) => {
+    if (err) {
+      console.error('Error checking rooms table:', err);
+      return;
+    }
+    
+    if (row.count === 0) {
+      console.log('📦 Inserting sample room data...');
+      const sampleRooms = [
+        { number: '101', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'available' },
+        { number: '102', type: 'Standard', capacity: 2, price: 2500, amenities: JSON.stringify(['WiFi', 'AC', 'TV']), status: 'occupied' },
+        { number: '201', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'available' },
+        { number: '202', type: 'Deluxe', capacity: 3, price: 3500, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar']), status: 'maintenance' },
+        { number: '301', type: 'Suite', capacity: 4, price: 5000, amenities: JSON.stringify(['WiFi', 'AC', 'TV', 'Mini Bar', 'Balcony']), status: 'available' }
+      ];
+      
+      sampleRooms.forEach(room => {
+        db.run('INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
+          [room.number, room.type, room.capacity, room.price, room.amenities, room.status]);
+      });
+      console.log('✅ Sample rooms inserted');
+    } else {
+      console.log(`📊 Database already has ${row.count} rooms, skipping sample data insertion`);
+    }
   });
 });
 
@@ -200,4 +213,5 @@ app.listen(PORT, () => {
   console.log(`   POST /api/submissions - Submit new work`);
   console.log(`   GET  /api/rooms - Get all rooms`);
   console.log(`🛡️  CORS enabled, JSON limit: 100MB`);
+  console.log(`💾 Using persistent SQLite database: hotel_management.db`);
 });
