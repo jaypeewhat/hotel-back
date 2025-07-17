@@ -5,16 +5,16 @@ const sqlite3 = require('sqlite3').verbose();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Middleware with increased limits
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // Initialize SQLite database
-const db = new sqlite3.Database(':memory:'); // In-memory for simplicity
+const db = new sqlite3.Database(':memory:');
 
 // Create tables
 db.serialize(() => {
-  // Submissions table
   db.run(`CREATE TABLE submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_name TEXT NOT NULL,
@@ -23,7 +23,6 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   
-  // Rooms table
   db.run(`CREATE TABLE rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     number TEXT NOT NULL UNIQUE,
@@ -45,291 +44,155 @@ db.serialize(() => {
   ];
   
   sampleRooms.forEach(room => {
-    db.run(
-      'INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [room.number, room.type, room.capacity, room.price, room.amenities, room.status]
-    );
+    db.run('INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [room.number, room.type, room.capacity, room.price, room.amenities, room.status]);
   });
 });
 
-// Routes
+// Health check
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Hotel Submission Backend API', 
-    status: 'Running',
-    version: '1.0.0',
+    message: 'Hotel Management Backend API is running!',
+    timestamp: new Date().toISOString(),
     endpoints: {
-      health: '/health',
       submissions: '/api/submissions',
       rooms: '/api/rooms'
     }
   });
 });
 
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
-
+// Get all submissions
 app.get('/api/submissions', (req, res) => {
+  console.log('📥 GET /api/submissions');
+  
   db.all('SELECT * FROM submissions ORDER BY created_at DESC', (err, rows) => {
     if (err) {
-      res.status(500).json({ 
-        success: false,
-        error: err.message 
-      });
+      console.error('❌ Database error:', err);
+      res.status(500).json({ success: false, error: 'Database error: ' + err.message });
       return;
     }
     
-    // Transform database rows to match frontend format
-    const submissions = rows.map(row => ({
-      id: row.id,
-      studentName: row.student_name,
-      type: row.work_type,
-      title: JSON.parse(row.content).title || 'Untitled',
-      description: JSON.parse(row.content).description || '',
-      data: JSON.parse(row.content).data || {},
-      submittedAt: row.created_at,
-      studentId: JSON.parse(row.content).studentId,
-      studentEmail: JSON.parse(row.content).studentEmail
-    }));
-    
-    console.log(`📋 Retrieved ${submissions.length} submissions`);
-    res.json(submissions);
+    console.log(`✅ Returning ${rows.length} submissions`);
+    res.json({ success: true, data: rows, count: rows.length });
   });
 });
 
+// Submit new work - with comprehensive error handling
 app.post('/api/submissions', (req, res) => {
-  console.log('📥 Received POST request to /api/submissions');
-  console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
+  console.log('📥 POST /api/submissions');
+  console.log('📊 Request size:', JSON.stringify(req.body).length, 'characters');
   
-  const { studentName, workType, content } = req.body;
-  
-  console.log('🔍 Extracted fields:');
-  console.log('   studentName:', studentName);
-  console.log('   workType:', workType);
-  console.log('   content type:', typeof content);
-  console.log('   content length:', content ? content.length : 'undefined');
-  
-  // Validation
-  if (!studentName || !workType || !content) {
-    console.log('❌ Validation failed - missing required fields');
-    res.status(400).json({ 
-      success: false,
-      error: 'Missing required fields: studentName, workType, content' 
-    });
-    return;
-  }
-
-  // Validate work type
-  const validWorkTypes = ['room_request', 'report', 'financial_report'];
-  if (!validWorkTypes.includes(workType)) {
-    console.log(`❌ Invalid work type: ${workType}`);
-    res.status(400).json({ 
-      success: false,
-      error: `Invalid work type: ${workType}. Valid types: ${validWorkTypes.join(', ')}` 
-    });
-    return;
-  }
-
-  console.log(`📝 Received submission: ${workType} from ${studentName}`);
-
-  db.run(
-    'INSERT INTO submissions (student_name, work_type, content) VALUES (?, ?, ?)',
-    [studentName, workType, content],
-    function(err) {
-      if (err) {
-        console.error('❌ Database error:', err);
-        res.status(500).json({ 
-          success: false,
-          error: 'Database error: ' + err.message 
-        });
-        return;
-      }
-      
-      const newSubmission = {
-        id: this.lastID,
-        studentName,
-        workType,
-        content: JSON.parse(content),
-        submittedAt: new Date().toISOString()
-      };
-      
-      console.log(`✅ Submission saved with ID: ${this.lastID}`);
-      res.json({ 
-        success: true,
-        data: newSubmission,
-        message: 'Submission saved successfully' 
-      });
-    }
-  );
-});
-
-// ROOMS API ENDPOINTS
-app.get('/api/rooms', (req, res) => {
-  db.all('SELECT * FROM rooms ORDER BY number ASC', (err, rows) => {
-    if (err) {
-      res.status(500).json({ 
+  try {
+    const { studentName, workType, content } = req.body;
+    
+    console.log('🔍 Fields received:');
+    console.log('  - studentName:', studentName ? '✅' : '❌');
+    console.log('  - workType:', workType ? '✅' : '❌');
+    console.log('  - content:', content ? '✅' : '❌');
+    console.log('  - content length:', content ? content.length : 0);
+    
+    // Validation
+    if (!studentName || !workType || !content) {
+      console.log('❌ Missing required fields');
+      return res.status(400).json({ 
         success: false,
-        error: err.message 
+        error: 'Missing required fields: studentName, workType, content',
+        received: { studentName: !!studentName, workType: !!workType, content: !!content }
       });
-      return;
     }
-    
-    // Transform database rows to match frontend format
-    const rooms = rows.map(row => ({
-      id: row.id,
-      number: row.number,
-      type: row.type,
-      capacity: row.capacity,
-      price: row.price,
-      amenities: JSON.parse(row.amenities || '[]'),
-      status: row.status,
-      createdAt: row.created_at
-    }));
-    
-    console.log(`🏨 Retrieved ${rooms.length} rooms`);
-    res.json(rooms);
-  });
-});
 
-app.post('/api/rooms', (req, res) => {
-  const { number, type, capacity, price, amenities, status } = req.body;
-  
-  // Validation
-  if (!number || !type || !capacity || !price) {
-    res.status(400).json({ 
+    // Validate work type
+    const validWorkTypes = ['room_request', 'report', 'financial_report'];
+    if (!validWorkTypes.includes(workType)) {
+      console.log(`❌ Invalid work type: ${workType}`);
+      return res.status(400).json({ 
+        success: false,
+        error: `Invalid work type: ${workType}. Valid types: ${validWorkTypes.join(', ')}`
+      });
+    }
+
+    console.log(`📝 Saving submission: ${workType} from ${studentName}`);
+
+    // Insert into database
+    db.run(
+      'INSERT INTO submissions (student_name, work_type, content) VALUES (?, ?, ?)',
+      [studentName, workType, content],
+      function(err) {
+        if (err) {
+          console.error('❌ Database insert error:', err);
+          console.error('   Error code:', err.code);
+          console.error('   Error message:', err.message);
+          
+          return res.status(500).json({ 
+            success: false,
+            error: 'Database error: ' + err.message,
+            code: err.code
+          });
+        }
+
+        console.log(`✅ Submission saved with ID: ${this.lastID}`);
+        
+        // Return the created submission
+        db.get('SELECT * FROM submissions WHERE id = ?', [this.lastID], (err, row) => {
+          if (err) {
+            console.error('❌ Error retrieving saved submission:', err);
+            return res.status(500).json({ 
+              success: false,
+              error: 'Error retrieving saved submission: ' + err.message
+            });
+          }
+          
+          console.log('✅ Submission created successfully');
+          res.status(201).json({ success: true, data: row });
+        });
+      }
+    );
+    
+  } catch (error) {
+    console.error('❌ Unexpected error in POST /api/submissions:', error);
+    res.status(500).json({ 
       success: false,
-      error: 'Missing required fields: number, type, capacity, price' 
+      error: 'Internal server error: ' + error.message,
+      stack: error.stack
     });
-    return;
   }
-
-  console.log(`🏨 Creating new room: ${number} (${type})`);
-
-  db.run(
-    'INSERT INTO rooms (number, type, capacity, price, amenities, status) VALUES (?, ?, ?, ?, ?, ?)',
-    [number, type, capacity, price, JSON.stringify(amenities || []), status || 'available'],
-    function(err) {
-      if (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ 
-          success: false,
-          error: 'Database error: ' + err.message 
-        });
-        return;
-      }
-      
-      const newRoom = {
-        id: this.lastID,
-        number,
-        type,
-        capacity,
-        price,
-        amenities: amenities || [],
-        status: status || 'available',
-        createdAt: new Date().toISOString()
-      };
-      
-      console.log(`✅ Room created with ID: ${this.lastID}`);
-      res.json({ 
-        success: true,
-        data: newRoom,
-        message: 'Room created successfully' 
-      });
-    }
-  );
 });
 
-app.put('/api/rooms/:id', (req, res) => {
-  const roomId = req.params.id;
-  const { number, type, capacity, price, amenities, status } = req.body;
-  
-  console.log(`🏨 Updating room ID: ${roomId}`);
-
-  db.run(
-    'UPDATE rooms SET number = ?, type = ?, capacity = ?, price = ?, amenities = ?, status = ? WHERE id = ?',
-    [number, type, capacity, price, JSON.stringify(amenities || []), status, roomId],
-    function(err) {
-      if (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ 
-          success: false,
-          error: 'Database error: ' + err.message 
-        });
-        return;
-      }
-      
-      if (this.changes === 0) {
-        res.status(404).json({ 
-          success: false,
-          error: 'Room not found' 
-        });
-        return;
-      }
-      
-      console.log(`✅ Room ${roomId} updated successfully`);
-      res.json({ 
-        success: true,
-        message: 'Room updated successfully' 
-      });
-    }
-  );
-});
-
-app.delete('/api/rooms/:id', (req, res) => {
-  const roomId = req.params.id;
-  
-  console.log(`🏨 Deleting room ID: ${roomId}`);
-
-  db.run('DELETE FROM rooms WHERE id = ?', [roomId], function(err) {
+// Get all rooms
+app.get('/api/rooms', (req, res) => {
+  db.all('SELECT * FROM rooms ORDER BY number', (err, rows) => {
     if (err) {
       console.error('Database error:', err);
-      res.status(500).json({ 
-        success: false,
-        error: 'Database error: ' + err.message 
-      });
+      res.status(500).json({ success: false, error: 'Database error: ' + err.message });
       return;
     }
     
-    if (this.changes === 0) {
-      res.status(404).json({ 
-        success: false,
-        error: 'Room not found' 
-      });
-      return;
-    }
+    const roomsWithParsedAmenities = rows.map(room => ({
+      ...room,
+      amenities: JSON.parse(room.amenities || '[]')
+    }));
     
-    console.log(`✅ Room ${roomId} deleted successfully`);
-    res.json({ 
-      success: true,
-      message: 'Room deleted successfully' 
-    });
+    res.json({ success: true, data: roomsWithParsedAmenities, count: rows.length });
   });
 });
 
-// Error handling middleware
+// Global error handler
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  console.error('🚨 Unhandled error:', err);
   res.status(500).json({ 
     success: false,
-    error: 'Internal server error' 
+    error: 'Internal server error',
+    message: err.message
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ 
-    success: false,
-    error: 'Endpoint not found' 
-  });
-});
-
+// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📡 Health check: http://localhost:${PORT}/health`);
-  console.log(`📋 API docs: http://localhost:${PORT}/`);
+  console.log(`🚀 Hotel Management Backend running on port ${PORT}`);
+  console.log(`📡 API Endpoints available:`);
+  console.log(`   GET  / - Health check`);
+  console.log(`   GET  /api/submissions - Get all submissions`);
+  console.log(`   POST /api/submissions - Submit new work`);
+  console.log(`   GET  /api/rooms - Get all rooms`);
+  console.log(`🛡️  CORS enabled, JSON limit: 100MB`);
 });
