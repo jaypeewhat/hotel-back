@@ -5,8 +5,13 @@ const sqlite3 = require('sqlite3').verbose();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware with increased limits
-app.use(cors());
+// Middleware with increased limits and specific CORS
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'https://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
